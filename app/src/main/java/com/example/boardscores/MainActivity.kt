@@ -38,8 +38,15 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         val prefs = getSharedPreferences("score_tracker", Context.MODE_PRIVATE)
         setContent {
+            var darkTheme by remember { mutableStateOf(prefs.getBoolean("dark_theme", false)) }
             MaterialTheme(
-                colorScheme = lightColorScheme(
+                colorScheme = if (darkTheme) darkColorScheme(
+                    primary = Color(0xFF8AB4FF),
+                    background = Color(0xFF101418),
+                    surface = Color(0xFF1B2229),
+                    onBackground = Color(0xFFE7EDF3),
+                    onSurface = Color(0xFFE7EDF3)
+                ) else lightColorScheme(
                     primary = Accent,
                     background = Surface,
                     surface = Color.White,
@@ -49,7 +56,9 @@ class MainActivity : ComponentActivity() {
             ) {
                 ScoreApp(
                     load = { prefs.getString("game", null) },
-                    save = { prefs.edit().putString("game", it).apply() }
+                    save = { prefs.edit().putString("game", it).apply() },
+                    darkTheme = darkTheme,
+                    onDarkThemeChange = { darkTheme = it; prefs.edit().putBoolean("dark_theme", it).apply() }
                 )
             }
         }
@@ -57,13 +66,14 @@ class MainActivity : ComponentActivity() {
 }
 
 @Composable
-private fun ScoreApp(load: () -> String?, save: (String) -> Unit) {
+private fun ScoreApp(load: () -> String?, save: (String) -> Unit, darkTheme: Boolean, onDarkThemeChange: (Boolean) -> Unit) {
     var players by remember { mutableStateOf(listOf<Player>()) }
     var rounds by remember { mutableStateOf(listOf<Round>()) }
     var draftNames by remember { mutableStateOf(listOf("", "")) }
     var scoreInputs by remember { mutableStateOf(listOf<String>()) }
     var initialized by remember { mutableStateOf(false) }
     var showResetConfirm by remember { mutableStateOf(false) }
+    var showSettings by remember { mutableStateOf(false) }
 
     fun persist(ps: List<Player>, rs: List<Round>) {
         val root = JSONObject()
@@ -100,7 +110,7 @@ private fun ScoreApp(load: () -> String?, save: (String) -> Unit) {
     LaunchedEffect(Unit) { restore() }
 
     if (!initialized) {
-        Box(Modifier.fillMaxSize().background(Surface), contentAlignment = Alignment.Center) {
+        Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background).windowInsetsPadding(WindowInsets.safeDrawing), contentAlignment = Alignment.Center) {
             CircularProgressIndicator()
         }
         return
@@ -120,11 +130,13 @@ private fun ScoreApp(load: () -> String?, save: (String) -> Unit) {
                     scoreInputs = names.map { "" }
                     persist(players, rounds)
                 }
-            }
+            },
+            onSettings = { showSettings = true }
         )
     } else {
         GameScreen(
             players = players,
+            darkTheme = darkTheme,
             rounds = rounds,
             scoreInputs = scoreInputs,
             onScoreChange = { i, v -> scoreInputs = scoreInputs.toMutableList().also { it[i] = v.filter { c -> c == '-' || c.isDigit() }.take(7) } },
@@ -144,7 +156,22 @@ private fun ScoreApp(load: () -> String?, save: (String) -> Unit) {
                     persist(players, rounds)
                 }
             },
-            onNewGame = { showResetConfirm = true }
+            onNewGame = { showResetConfirm = true },
+            onSettings = { showSettings = true }
+        )
+    }
+
+    if (showSettings) {
+        AlertDialog(
+            onDismissRequest = { showSettings = false },
+            title = { Text("Settings") },
+            text = {
+                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+                    Text("Dark theme", modifier = Modifier.weight(1f))
+                    Switch(checked = darkTheme, onCheckedChange = onDarkThemeChange)
+                }
+            },
+            confirmButton = { TextButton(onClick = { showSettings = false }) { Text("Done") } }
         )
     }
 
@@ -174,18 +201,25 @@ private fun SetupScreen(
     onNameChange: (Int, String) -> Unit,
     onAdd: () -> Unit,
     onRemove: (Int) -> Unit,
-    onStart: () -> Unit
+    onStart: () -> Unit,
+    onSettings: () -> Unit
 ) {
+    val colors = MaterialTheme.colorScheme
     Column(
-        Modifier.fillMaxSize().background(Surface).padding(horizontal = 18.dp, vertical = 18.dp),
+        Modifier.fillMaxSize().background(colors.background).windowInsetsPadding(WindowInsets.safeDrawing).padding(horizontal = 18.dp, vertical = 12.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
-        Text("Board Score", fontSize = 27.sp, fontWeight = FontWeight.Bold, color = Ink)
-        Text("Add 2–12 players", fontSize = 14.sp, color = Muted)
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Column(Modifier.weight(1f)) {
+                Text("Board Score", fontSize = 27.sp, fontWeight = FontWeight.Bold, color = colors.onBackground)
+                Text("Add 2–12 players", fontSize = 14.sp, color = colors.onBackground.copy(alpha = 0.65f))
+            }
+            IconButton(onClick = onSettings) { Text("⚙", fontSize = 23.sp, color = colors.onBackground) }
+        }
         LazyColumn(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(7.dp)) {
             itemsIndexed(names) { index, name ->
                 Row(
-                    Modifier.fillMaxWidth().background(Color.White, RoundedCornerShape(12.dp)).padding(horizontal = 12.dp, vertical = 7.dp),
+                    Modifier.fillMaxWidth().background(colors.surface, RoundedCornerShape(12.dp)).padding(horizontal = 12.dp, vertical = 7.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Text("${index + 1}", color = Muted, fontSize = 13.sp, modifier = Modifier.width(24.dp))
@@ -193,7 +227,7 @@ private fun SetupScreen(
                         value = name,
                         onValueChange = { onNameChange(index, it.take(28)) },
                         singleLine = true,
-                        textStyle = androidx.compose.ui.text.TextStyle(color = Ink, fontSize = 16.sp),
+                        textStyle = androidx.compose.ui.text.TextStyle(color = colors.onSurface, fontSize = 16.sp),
                         decorationBox = { inner ->
                             Box {
                                 if (name.isBlank()) Text("Player name", color = Color(0xFF9AA4AE), fontSize = 16.sp)
@@ -229,35 +263,40 @@ private fun SetupScreen(
 @Composable
 private fun GameScreen(
     players: List<Player>,
+    darkTheme: Boolean,
     rounds: List<Round>,
     scoreInputs: List<String>,
     onScoreChange: (Int, String) -> Unit,
     onAddRound: () -> Unit,
     onUndo: () -> Unit,
-    onNewGame: () -> Unit
+    onNewGame: () -> Unit,
+    onSettings: () -> Unit
 ) {
-    val ranked = players.withIndex().sortedWith(compareByDescending<IndexedValue<Player>> { it.value.total }.thenBy { it.index })
-    Column(Modifier.fillMaxSize().background(Surface).padding(horizontal = 12.dp, vertical = 8.dp)) {
+    val colors = MaterialTheme.colorScheme
+    Column(Modifier.fillMaxSize().background(colors.background).windowInsetsPadding(WindowInsets.safeDrawing).padding(horizontal = 12.dp, vertical = 6.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
             Column(Modifier.weight(1f)) {
-                Text("Scores", fontSize = 25.sp, fontWeight = FontWeight.Bold, color = Ink)
-                Text("${players.size} players · ${rounds.size} rounds", fontSize = 12.sp, color = Muted)
+                Text("Scores", fontSize = 25.sp, fontWeight = FontWeight.Bold, color = colors.onBackground)
+                Text("${players.size} players · ${rounds.size} rounds", fontSize = 12.sp, color = colors.onBackground.copy(alpha = 0.65f))
             }
             TextButton(onClick = onUndo, enabled = rounds.isNotEmpty(), contentPadding = PaddingValues(horizontal = 8.dp)) {
                 Text("↶ Undo", fontSize = 13.sp)
             }
             TextButton(onClick = onNewGame, contentPadding = PaddingValues(horizontal = 4.dp)) {
-                Text("New", fontSize = 13.sp, color = Muted)
+                Text("New", fontSize = 13.sp, color = colors.onBackground.copy(alpha = 0.7f))
+            }
+            IconButton(onClick = onSettings, modifier = Modifier.size(38.dp)) {
+                Text("⚙", fontSize = 21.sp, color = colors.onBackground)
             }
         }
         Spacer(Modifier.height(7.dp))
         Row(
-            Modifier.fillMaxWidth().background(Color(0xFFE9EEF5), RoundedCornerShape(8.dp)).padding(horizontal = 10.dp, vertical = 7.dp),
+            Modifier.fillMaxWidth().background(if (darkTheme) Color(0xFF29333D) else Color(0xFFE9EEF5), RoundedCornerShape(8.dp)).padding(horizontal = 10.dp, vertical = 7.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Text("PLAYER", fontSize = 10.sp, fontWeight = FontWeight.Bold, color = Muted, modifier = Modifier.weight(1f))
-            Text("TOTAL", fontSize = 10.sp, fontWeight = FontWeight.Bold, color = Muted, modifier = Modifier.width(58.dp), textAlign = androidx.compose.ui.text.style.TextAlign.End)
-            Text("ROUND", fontSize = 10.sp, fontWeight = FontWeight.Bold, color = Muted, modifier = Modifier.width(70.dp), textAlign = androidx.compose.ui.text.style.TextAlign.Center)
+            Text("PLAYER", fontSize = 10.sp, fontWeight = FontWeight.Bold, color = if (darkTheme) Color(0xFFB4C0CC) else Muted, modifier = Modifier.weight(1f))
+            Text("TOTAL", fontSize = 10.sp, fontWeight = FontWeight.Bold, color = if (darkTheme) Color(0xFFB4C0CC) else Muted, modifier = Modifier.width(58.dp), textAlign = androidx.compose.ui.text.style.TextAlign.End)
+            Text("ROUND", fontSize = 10.sp, fontWeight = FontWeight.Bold, color = if (darkTheme) Color(0xFFB4C0CC) else Muted, modifier = Modifier.width(70.dp), textAlign = androidx.compose.ui.text.style.TextAlign.Center)
         }
         LazyColumn(
             modifier = Modifier.weight(1f),
@@ -266,7 +305,7 @@ private fun GameScreen(
         ) {
             itemsIndexed(players) { index, player ->
                 Row(
-                    Modifier.fillMaxWidth().heightIn(min = 42.dp).background(Color.White, RoundedCornerShape(9.dp)).padding(horizontal = 10.dp, vertical = 4.dp),
+                    Modifier.fillMaxWidth().heightIn(min = 42.dp).background(colors.surface, RoundedCornerShape(9.dp)).padding(horizontal = 10.dp, vertical = 4.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Text(
@@ -276,7 +315,7 @@ private fun GameScreen(
                         fontWeight = FontWeight.Medium,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
-                        color = Ink
+                        color = colors.onSurface
                     )
                     Text(
                         player.total.toString(),
@@ -284,10 +323,10 @@ private fun GameScreen(
                         fontSize = 16.sp,
                         fontWeight = FontWeight.Bold,
                         textAlign = androidx.compose.ui.text.style.TextAlign.End,
-                        color = if (player.total < 0) Color(0xFFB42318) else Ink
+                        color = if (player.total < 0) Color(0xFFB42318) else colors.onSurface
                     )
                     Box(
-                        Modifier.width(70.dp).height(34.dp).background(Surface, RoundedCornerShape(7.dp)).padding(horizontal = 7.dp),
+                        Modifier.width(70.dp).height(34.dp).background(colors.background, RoundedCornerShape(7.dp)).padding(horizontal = 7.dp),
                         contentAlignment = Alignment.Center
                     ) {
                         BasicTextField(
@@ -296,7 +335,7 @@ private fun GameScreen(
                             singleLine = true,
                             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                             textStyle = androidx.compose.ui.text.TextStyle(
-                                color = Ink, fontSize = 15.sp, textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                                color = colors.onSurface, fontSize = 15.sp, textAlign = androidx.compose.ui.text.style.TextAlign.Center
                             ),
                             decorationBox = { inner ->
                                 Box(contentAlignment = Alignment.Center) {
